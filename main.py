@@ -52,7 +52,7 @@ def randomlySelect(t_set, ratio):
     to_keep = random.sample(range(len(t_set)), k=int(round(len(t_set)*ratio)))
     t_set_reduced = [t_set[i] for i in to_keep]
     labels = np.array([int(element[2]) if len(element) > 2 else None for element in t_set_reduced])
-    return t_set_reduced, labels
+    return t_set_reduced, labels, to_keep
 
 # we will use three basic features:
 # - number of overlapping words in title
@@ -62,7 +62,7 @@ def randomlySelect(t_set, ratio):
 def computeFeatures(t_set, info_node, ratio):
     counter = 0
     features = []
-    t_set, labels =  randomlySelect(t_set, ratio)
+    t_set, labels, to_keep =  randomlySelect(t_set, ratio)
     for i in tqdm(range(len(t_set))):
         source_id = t_set[i][0]
         target_id = t_set[i][1]
@@ -87,13 +87,15 @@ def computeFeatures(t_set, info_node, ratio):
         temp_diff = int(source_info["time"]) - int(target_info["time"])
         comm_auth = len(set(source_auth).intersection(set(target_auth)))
 
+        #taille plus court chemin
+
         features.append([overlap_title, temp_diff, comm_auth])
 
     features = np.array(features)
     # scale
     features = preprocessing.scale(features)
 
-    return features, labels
+    return features, labels, to_keep
 
 ratio_training = 0.05
 ration_valid = 0.05
@@ -113,11 +115,12 @@ if os.path.exists(hash_feature):#make sure we have not already computed the feat
     testing_features = loadJson("test")
 else:
     print("Compute Training features")
-    training_features, labels = computeFeatures(training_set, info_node, ratio_training)
+    training_features, labels, to_keep = computeFeatures(training_set, info_node, ratio_training)
     print("Compute Validation features")
-    validation_features, labels_validation = computeFeatures(training_set, info_node, ration_valid)
+    print(np.delete(training_set, to_keep, 0))
+    validation_features, labels_validation, _ = computeFeatures(np.delete(training_set, to_keep, 0), info_node, ration_valid)
     print("Compute Testing features")
-    testing_features, _ = computeFeatures(testing_set, info_node, 1)
+    testing_features, _, _ = computeFeatures(testing_set, info_node, 1)
     os.mkdir(hash_feature)
     def saveJson(l, name):
         f = open(os.path.join(hash_feature, name+".json"), "w")
