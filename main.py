@@ -19,11 +19,8 @@ from lightgbm import LGBMClassifier
 from xgboost import XGBClassifier
 import networkx as nx
 from sklearn.metrics import f1_score
-
-nltk.download('punkt')
-nltk.download('stopwords')
-stpwds = set(nltk.corpus.stopwords.words("english"))
-stemmer = nltk.stem.PorterStemmer()
+from multiprocessing import Pool
+from gensim.models import KeyedVectors
      
 def readCSV(filename):
     with open(filename, "r") as f:
@@ -34,8 +31,6 @@ def openLink(filename):
     t_set  = readCSV(filename)
     return [element[0].split(" ") for element in t_set]
 
-training_set = openLink("training_set.txt")
-testing_set = openLink("testing_set.txt")
 
 def getInfoNodes():
     node_csv  = readCSV("node_information.csv")
@@ -44,11 +39,7 @@ def getInfoNodes():
         info_node[element[0]] = {"corpus": element[5], "title": element[2], "author_list": element[3], "time": element[1]}
     return info_node
 
-info_node = getInfoNodes()
 
-# compute TFIDF vector of each paper
-vectorizer = TfidfVectorizer(stop_words="english")
-features_TFIDF = vectorizer.fit_transform([element["corpus"] for element in info_node.values()])
 
 def randomlySelect(t_set, ratio):
     to_keep = random.sample(range(len(t_set)), k=int(round(len(t_set)*ratio)))
@@ -56,24 +47,7 @@ def randomlySelect(t_set, ratio):
     labels = np.array([int(element[2]) if len(element) > 2 else None for element in t_set_reduced])
     return t_set_reduced, labels, to_keep
 
-# we will use three basic features:
-# - number of overlapping words in title
-# - temporal distance between the papers
-#-  number of common authors
 
-ratio_training = 0.05
-ration_valid = 0.05
-
-validation_set, labels_validation, to_keep = randomlySelect(training_set, ration_valid)
-training_set = np.delete(training_set, to_keep, 0)
-
-DG = nx.DiGraph()
-DG.add_nodes_from(info_node.keys())
-for i in range(len(training_set)):
-    if training_set[i][2] == "1":
-        DG.add_edge(training_set[i][0],training_set[i][1])
-
-training_set, labels, to_keep = randomlySelect(training_set, ratio_training)
 
 def compute_stats(network, source, target):
     has_edge = False
@@ -85,8 +59,7 @@ def compute_stats(network, source, target):
         """all_path = nx.all_shortest_paths(network, source=source, target=target)
         for a in all_path:
             n_path +=1"""
-        shortest_length = -1
-        #shortest_length =  nx.shortest_path_length(network, source=source, target=target)
+        shortest_length =  nx.shortest_path_length(network, source=source, target=target)
     else:
         n_path = 0
         shortest_length = -1
@@ -107,7 +80,7 @@ def compute_stats(network, source, target):
         network.add_edge(source, target)
     return n_path,shortest_length, n_common
 
-def computeFeatures(DG, t_set, info_node, ratio):
+def computeFeatures(t_set):
     counter = 0
     features = []
     for i in tqdm(range(len(t_set))):
@@ -144,49 +117,18 @@ def computeFeatures(DG, t_set, info_node, ratio):
     # scale
     features = preprocessing.scale(features)
 
-    return features, labels, to_keep
+    return features
 
-m = hashlib.sha256()
-m.update((inspect.getsource(computeFeatures)+"_"+str(ratio_training)+"_"+str(ration_valid)).encode("utf-8"))
-hash_feature = m.hexdigest()
-if os.path.exists(hash_feature):#make sure we have not already computed the features
-    def loadJson(name):
-        f = open(os.path.join(hash_feature, name+".json"), "r")
-        l = list(json.loads(f.read()))
-        f.close()
-        return l
-    training_features = loadJson("train")
-    labels = loadJson("train_label")
-    validation_features = loadJson("valid")
-    labels_validation = loadJson("valid_label")
-    testing_features = loadJson("test")
-else:
-    print("Compute Training features")
-    training_features, labels, to_keep = computeFeatures(DG, training_set, info_node, ratio_training)
-    print("Compute Validation features")
-    validation_features, labels_validation, _ = computeFeatures(DG, validation_set, info_node, ration_valid)
-    print("Compute Testing features")
-    testing_features, _, _ = computeFeatures(DG, testing_set, info_node, 1)
-    os.mkdir(hash_feature)
-    def saveJson(l, name):
-        f = open(os.path.join(hash_feature, name+".json"), "w")
-        f.write(json.dumps(l.tolist()))
-        f.close()
-    saveJson(training_features, "train")
-    saveJson(labels, "train_label")
-    saveJson(validation_features, "valid")
-    saveJson(labels_validation, "valid_label")
-    saveJson(testing_features, "test")
+def saveJson(l, name):
+    f = open(os.path.join(hash_feature, name+".json"), "w")
+    f.write(json.dumps(l.tolist()))
+    f.close()
 
-
-print(training_features[:10])
-
-training_features = np.array(training_features)
-validation_features = np.array(validation_features)
-testing_features = np.array(testing_features)
-labels = np.array(labels)
-labels_validation = np.array(labels_validation)
-
+def loadJson(name):
+    f = open(os.path.join(hash_feature, name+".json"), "r")
+    l = list(json.loads(f.read()))
+    f.close()
+    return l
 
 def trainAndTest(classifier, name):
     print(name)
@@ -235,26 +177,103 @@ def trainAndTest(classifier, name):
         for row in predictions_SVM:
             csv_out.writerow(row)
 
-# basic SVM
-classifier = svm.LinearSVC()
-trainAndTest(classifier, "LinearSVC")
+if __name__ == '__main__':
+    nltk.download('punkt')
+    nltk.download('stopwords')
+    stpwds = set(nltk.corpus.stopwords.words("english"))
+    stemmer = nltk.stem.PorterStemmer()
 
-# Random Forest
-classifier = RandomForestClassifier(n_estimators=100, max_depth=3, n_jobs=8)
-trainAndTest(classifier, "RandomForestClassifier")
+    embeddings = KeyedVectors.load_word2vec_format('crawl-300d-2M.vec')
 
-# Boosting
-classifier = GradientBoostingClassifier(n_estimators=100, learning_rate=0.1, max_depth=3)
-trainAndTest(classifier, "GradientBoostingClassifier")
+    training_set = openLink("training_set.txt")
+    testing_set = openLink("testing_set.txt")
 
-# Logistic Regressor
-classifier = LogisticRegression()
-trainAndTest(classifier, "LogisticRegression")
+    info_node = getInfoNodes()
 
-#LightGBM
-classifier = LGBMClassifier(n_estimators=100, n_jobs=8)
-trainAndTest(classifier, "LightGBM")
+    # compute TFIDF vector of each paper
+    vectorizer = TfidfVectorizer(stop_words="english")
+    features_TFIDF = vectorizer.fit_transform([element["corpus"] for element in info_node.values()])
 
-#XGBoost
-classifier = XGBClassifier(n_estimators=100, n_jobs=8)
-trainAndTest(classifier, "XGBoost")
+    # we will use three basic features:
+    # - number of overlapping words in title
+    # - temporal distance between the papers
+    #-  number of common authors
+
+    ratio_training = 0.05
+    ration_valid = 0.05
+
+    validation_set, labels_validation, to_keep = randomlySelect(training_set, ration_valid)
+    training_set = np.delete(training_set, to_keep, 0)
+
+    DG = nx.DiGraph()
+    DG.add_nodes_from(info_node.keys())
+    for i in range(len(training_set)):
+        if training_set[i][2] == "1":
+            DG.add_edge(training_set[i][0],training_set[i][1])
+
+    training_set, labels, to_keep = randomlySelect(training_set, ratio_training)
+
+    m = hashlib.sha256()
+    m.update((inspect.getsource(computeFeatures)+"_"+str(ratio_training)+"_"+str(ration_valid)).encode("utf-8"))
+    hash_feature = m.hexdigest()
+    if os.path.exists(hash_feature):#make sure we have not already computed the features
+        training_features = loadJson("train")
+        labels = loadJson("train_label")
+        validation_features = loadJson("valid")
+        labels_validation = loadJson("valid_label")
+        testing_features = loadJson("test")
+    else:
+        print("Compute Training features")
+        training_features = computeFeatures(training_set)
+        print("Compute Validation features")
+        validation_features = computeFeatures(validation_set)
+        print("Compute Testing features")
+        testing_features = computeFeatures(testing_set)
+        #training_features = computeFeatures(DG, training_set, info_node, ratio_training)
+    
+        #validation_features = computeFeatures(DG, validation_set, info_node, ration_valid)
+        
+        #testing_features = computeFeatures(DG, testing_set, info_node, 1)
+        os.mkdir(hash_feature)
+        
+        saveJson(training_features, "train")
+        saveJson(labels, "train_label")
+        saveJson(validation_features, "valid")
+        saveJson(labels_validation, "valid_label")
+        saveJson(testing_features, "test")
+
+
+    print(training_features[:10])
+
+    training_features = np.array(training_features)
+    validation_features = np.array(validation_features)
+    testing_features = np.array(testing_features)
+    labels = np.array(labels)
+    labels_validation = np.array(labels_validation)
+
+
+   
+
+    # basic SVM
+    classifier = svm.LinearSVC()
+    trainAndTest(classifier, "LinearSVC")
+
+    # Random Forest
+    classifier = RandomForestClassifier(n_estimators=100, max_depth=3, n_jobs=8)
+    trainAndTest(classifier, "RandomForestClassifier")
+
+    # Boosting
+    classifier = GradientBoostingClassifier(n_estimators=100, learning_rate=0.1, max_depth=3)
+    trainAndTest(classifier, "GradientBoostingClassifier")
+
+    # Logistic Regressor
+    classifier = LogisticRegression()
+    trainAndTest(classifier, "LogisticRegression")
+
+    #LightGBM
+    classifier = LGBMClassifier(n_estimators=100, n_jobs=8)
+    trainAndTest(classifier, "LightGBM")
+
+    #XGBoost
+    classifier = XGBClassifier(n_estimators=100, n_jobs=8)
+    trainAndTest(classifier, "XGBoost")
