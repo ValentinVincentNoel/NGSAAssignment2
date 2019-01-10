@@ -17,6 +17,8 @@ import hashlib
 from sklearn.ensemble import GradientBoostingClassifier
 from lightgbm import LGBMClassifier
 from xgboost import XGBClassifier
+import networkx as nx
+from sklearn.metrics import f1_score
 
 nltk.download('punkt')
 nltk.download('stopwords')
@@ -59,13 +61,46 @@ def randomlySelect(t_set, ratio):
 # - temporal distance between the papers
 #-  number of common authors
 
-def computeFeatures(t_set, info_node, ratio):
+DG = nx.DiGraph()
+DG.add_nodes_from(info_node.keys())
+for i in range(len(training_set)):
+    if training_set[i][2] == 1:
+        DG.add_edge(training_set[i][0],training_set[i][1])
+
+def compute_stats(network, source, target):
+    if nx.has_path(network, source=source, target=target):
+        all_path = nx.all_shortest_paths(network, source=source, target=target)
+        n_path = 0
+        for a in all_path:
+            n_path +=1
+        shortest_length =  nx.shortest_path_length(network, source=source, target=target)
+    else:
+        n_path = 0
+        shortest_length = -1
+    s_an = nx.all_neighbors(network, source)
+    t_an = nx.all_neighbors(network, target)
+    s = []
+    for i in s_an:
+        s.append(i)
+    t = []
+    for i in t_an:
+        t.append(i)
+    count = 0
+    for elt in s:
+        if elt in t:
+            count += 1
+    n_common = count
+    return n_path,shortest_length, n_common
+
+def computeFeatures(DG, t_set, info_node, ratio):
     counter = 0
     features = []
     t_set, labels, to_keep =  randomlySelect(t_set, ratio)
     for i in tqdm(range(len(t_set))):
         source_id = t_set[i][0]
         target_id = t_set[i][1]
+
+        n_path,shortest_length, n_common = compute_stats(DG, source_id, target_id)
         
         source_info = info_node[source_id]
         target_info = info_node[target_id]
@@ -89,7 +124,7 @@ def computeFeatures(t_set, info_node, ratio):
 
         #taille plus court chemin
 
-        features.append([overlap_title, temp_diff, comm_auth])
+        features.append([overlap_title, temp_diff, comm_auth, n_path,shortest_length, n_common])
 
     features = np.array(features)
     # scale
@@ -115,12 +150,11 @@ if os.path.exists(hash_feature):#make sure we have not already computed the feat
     testing_features = loadJson("test")
 else:
     print("Compute Training features")
-    training_features, labels, to_keep = computeFeatures(training_set, info_node, ratio_training)
+    training_features, labels, to_keep = computeFeatures(DG, training_set, info_node, ratio_training)
     print("Compute Validation features")
-    print(np.delete(training_set, to_keep, 0))
-    validation_features, labels_validation, _ = computeFeatures(np.delete(training_set, to_keep, 0), info_node, ration_valid)
+    validation_features, labels_validation, _ = computeFeatures(DG, np.delete(training_set, to_keep, 0), info_node, ration_valid)
     print("Compute Testing features")
-    testing_features, _, _ = computeFeatures(testing_set, info_node, 1)
+    testing_features, _, _ = computeFeatures(DG, testing_set, info_node, 1)
     os.mkdir(hash_feature)
     def saveJson(l, name):
         f = open(os.path.join(hash_feature, name+".json"), "w")
@@ -131,6 +165,9 @@ else:
     saveJson(validation_features, "valid")
     saveJson(labels_validation, "valid_label")
     saveJson(testing_features, "test")
+
+
+print(training_features[:10])
 
 training_features = np.array(training_features)
 validation_features = np.array(validation_features)
@@ -167,6 +204,7 @@ def trainAndTest(classifier, name):
         return p, r, f1
 
     p, r, f1 = F1Score(labels_validation, prediction_validation)
+    F1 = 
     print("Validation")
     print("Precision : "+str(p))
     print("Recall : "+str(r))
