@@ -61,19 +61,32 @@ def randomlySelect(t_set, ratio):
 # - temporal distance between the papers
 #-  number of common authors
 
+ratio_training = 0.05
+ration_valid = 0.05
+
+validation_set, labels_validation, to_keep = randomlySelect(training_set, ration_valid)
+training_set = np.delete(training_set, to_keep, 0)
+
 DG = nx.DiGraph()
 DG.add_nodes_from(info_node.keys())
 for i in range(len(training_set)):
-    if training_set[i][2] == 1:
+    if training_set[i][2] == "1":
         DG.add_edge(training_set[i][0],training_set[i][1])
 
+training_set, labels, to_keep = randomlySelect(training_set, ratio_training)
+
 def compute_stats(network, source, target):
+    has_edge = False
+    if network.has_edge(source, target):
+        has_edge = True
+        network.remove_edge(source, target)
     if nx.has_path(network, source=source, target=target):
-        all_path = nx.all_shortest_paths(network, source=source, target=target)
         n_path = 0
+        """all_path = nx.all_shortest_paths(network, source=source, target=target)
         for a in all_path:
-            n_path +=1
-        shortest_length =  nx.shortest_path_length(network, source=source, target=target)
+            n_path +=1"""
+        shortest_length = -1
+        #shortest_length =  nx.shortest_path_length(network, source=source, target=target)
     else:
         n_path = 0
         shortest_length = -1
@@ -90,12 +103,13 @@ def compute_stats(network, source, target):
         if elt in t:
             count += 1
     n_common = count
+    if has_edge:
+        network.add_edge(source, target)
     return n_path,shortest_length, n_common
 
 def computeFeatures(DG, t_set, info_node, ratio):
     counter = 0
     features = []
-    t_set, labels, to_keep =  randomlySelect(t_set, ratio)
     for i in tqdm(range(len(t_set))):
         source_id = t_set[i][0]
         target_id = t_set[i][1]
@@ -132,8 +146,6 @@ def computeFeatures(DG, t_set, info_node, ratio):
 
     return features, labels, to_keep
 
-ratio_training = 0.05
-ration_valid = 0.05
 m = hashlib.sha256()
 m.update((inspect.getsource(computeFeatures)+"_"+str(ratio_training)+"_"+str(ration_valid)).encode("utf-8"))
 hash_feature = m.hexdigest()
@@ -152,7 +164,7 @@ else:
     print("Compute Training features")
     training_features, labels, to_keep = computeFeatures(DG, training_set, info_node, ratio_training)
     print("Compute Validation features")
-    validation_features, labels_validation, _ = computeFeatures(DG, np.delete(training_set, to_keep, 0), info_node, ration_valid)
+    validation_features, labels_validation, _ = computeFeatures(DG, validation_set, info_node, ration_valid)
     print("Compute Testing features")
     testing_features, _, _ = computeFeatures(DG, testing_set, info_node, 1)
     os.mkdir(hash_feature)
@@ -204,7 +216,6 @@ def trainAndTest(classifier, name):
         return p, r, f1
 
     p, r, f1 = F1Score(labels_validation, prediction_validation)
-    F1 = 
     print("Validation")
     print("Precision : "+str(p))
     print("Recall : "+str(r))
